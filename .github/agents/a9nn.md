@@ -200,7 +200,6 @@ See `/doc` directory:
 - [module.md](../../doc/module.md): Module interface
 - [containers.md](../../doc/containers.md): Container classes
 - [training.md](../../doc/training.md): Training procedures
-- [agent-neuro.md](./agent-neuro.md): Cognitive agent guide
 
 ---
 
