@@ -40,12 +40,17 @@ end
 
 function CLP:_selectLayer(frame, input)
    -- Frame-consciousness coupling
-   if frame == "chaos" then return LAYERS.L1_Experiential
-   elseif frame == "strategy" then return LAYERS.L2_Reflective
-   elseif frame == "play" then return LAYERS.L1_Experiential
-   elseif frame == "learning" then return LAYERS.L3_Meta
+   if frame == "chaos" then 
+      return LAYERS.L1_Experiential
+   elseif frame == "strategy" then 
+      return LAYERS.L2_Reflective
+   elseif frame == "play" then 
+      return LAYERS.L1_Experiential
+   elseif frame == "learning" then 
+      return LAYERS.L3_Meta
+   else
+      return LAYERS.L1_Experiential
    end
-   return LAYERS.L1_Experiential
 end
 
 function CLP:_transitionTo(layer, metadata)

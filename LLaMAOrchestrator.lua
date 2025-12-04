@@ -81,9 +81,9 @@ function LLaMAOrch:generate(prompt, config)
       return {error = "No available instances"}
    end
    
-   -- Create task
+   -- Create task with unique ID
    local task = {
-      id = "task_" .. os.time() .. "_" .. torch.random(1, 9999),
+      id = "task_" .. os.time() .. "_" .. torch.random(100000, 999999) .. "_" .. instance.id,
       prompt = prompt,
       config = config,
       instance = instance.id,

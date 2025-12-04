@@ -70,11 +70,20 @@ function ESRP:adaptParameters(emotionalArousal, frame)
    }
    
    local targetRadius = frameRadii[frame] or 0.9
-   self.spectralRadius = targetRadius
+   
+   -- Rescale reservoir weights to new spectral radius
+   if self.spectralRadius ~= targetRadius then
+      local currentRadius = self:_computeSpectralRadius()
+      if currentRadius > 0 then
+         self.W_reservoir:mul(targetRadius / currentRadius)
+      end
+      self.spectralRadius = targetRadius
+   end
    
    -- Adjust input scaling based on emotional arousal
    if type(emotionalArousal) == "number" then
       self.inputScaling = 1.0 + 0.3 * emotionalArousal
+      self.W_input:mul(self.inputScaling / (1.0 + 0.3 * (emotionalArousal - 0.5)))
    end
 end
 

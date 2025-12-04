@@ -130,7 +130,16 @@ function NNECCOAgent:_representPhase()
    -- Reservoir state update
    if self.lastInputTensor then
       local modulation = self.emotionUnit:getReservoirModulation(self.currentFrame)
-      self.reservoir:adaptParameters(modulation.input_scale_modifier, self.currentFrame)
+      
+      -- Apply all modulation parameters
+      self.reservoir:adaptParameters(self.emotionUnit.arousal, self.currentFrame)
+      
+      -- Adjust leak rate if needed
+      if modulation.leak_rate_modifier then
+         self.reservoir.leakRate = self.reservoir.leakRate * modulation.leak_rate_modifier
+         self.reservoir.leakRate = math.max(0.1, math.min(0.9, self.reservoir.leakRate))
+      end
+      
       self.reservoirOutput = self.reservoir:updateOutput(self.lastInputTensor)
       self.registers.ESRP_STATUS = 1
    end
@@ -207,6 +216,11 @@ function NNECCOAgent:process(input, context)
    
    -- Run full cognitive pipeline (inherited from NeuroAgent)
    local results = parent.process(self, input, context)
+   
+   -- Ensure results is a valid table
+   if type(results) ~= "table" then
+      results = {}
+   end
    
    -- Add NNECCO-specific metadata
    results.nnecco = {
