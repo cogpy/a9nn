@@ -166,6 +166,96 @@ Advantage Actor-Critic (A2C) implementation with GAE and entropy regularization.
 - `entropyCoef`: Entropy bonus weight (default: 0.01)
 - `valueLossCoef`: Value loss weight (default: 0.5)
 
+<a name="nn.PrioritizedReplayMemory"></a>
+### nn.PrioritizedReplayMemory ###
+
+```lua
+memory = nn.PrioritizedReplayMemory(capacity, observationDim, config)
+memory:push(obs, action, reward, nextObs, done)
+batch = memory:sample(batchSize)
+memory:updatePriorities(treeIndices, tdErrors)
+```
+
+Prioritized Experience Replay (PER) buffer using a sum-tree data structure for O(log n) sampling. Experiences with higher TD errors are sampled more frequently.
+
+**Config options:**
+- `alpha`: Priority exponent, 0=uniform, 1=full prioritization (default: 0.6)
+- `beta`: Importance sampling exponent, annealed to 1 (default: 0.4)
+- `betaIncrement`: Beta annealing rate per sample (default: 0.001)
+- `epsilon`: Small constant for non-zero priorities (default: 1e-6)
+
+**Methods:**
+- `push(obs, action, reward, nextObs, done)`: Store transition with max priority
+- `sample(batchSize)`: Sample batch based on priorities, returns weights and indices
+- `updatePriorities(treeIndices, tdErrors)`: Update priorities after learning
+- `getBeta()`: Get current importance sampling exponent
+- `setBeta(beta)`: Set importance sampling exponent
+
+**Batch includes:**
+- `observations`, `actions`, `rewards`, `nextObservations`, `dones`: Standard batch data
+- `weights`: Importance sampling weights for bias correction
+- `treeIndices`: Indices for priority updates
+
+---
+
+## Environments ##
+
+<a name="nn.Environment"></a>
+### nn.Environment ###
+
+```lua
+env = nn.Environment(config)
+obs = env:reset()
+nextObs, reward, done, info = env:step(action)
+env:render(mode)
+action = env:sampleAction()
+```
+
+Base class for RL environments with Gym-like interface.
+
+**Factory method:**
+```lua
+env = nn.Environment.make("CartPole")  -- Create environment by name
+```
+
+**Available environments:**
+- `CartPole-v1`: Classic pole balancing (obs=4, actions=2)
+- `MountainCar-v0`: Build momentum to reach goal (obs=2, actions=3)
+- `GridWorld`: Navigate grid to goal (obs=2, actions=4)
+- `Bandit`: Multi-armed bandit (obs=1, actions=n)
+
+<a name="nn.CartPoleEnv"></a>
+### nn.CartPoleEnv ###
+
+```lua
+env = nn.CartPoleEnv(config)
+obs = env:reset()  -- [x, x_dot, theta, theta_dot]
+obs, reward, done, info = env:step(action)  -- action: 1=left, 2=right
+```
+
+Classic cart-pole balancing. Agent must keep pole upright by moving cart left/right.
+
+- **Observation**: 4D (cart position, velocity, pole angle, angular velocity)
+- **Actions**: 2 (push left, push right)
+- **Reward**: +1 for each step pole is balanced
+- **Termination**: Pole falls >12°, cart moves >2.4 units, or 500 steps
+
+<a name="nn.GridWorldEnv"></a>
+### nn.GridWorldEnv ###
+
+```lua
+env = nn.GridWorldEnv({gridSize=5, obstacles={{2,2},{3,3}}})
+obs = env:reset()
+obs, reward, done, info = env:step(action)  -- action: 1=up, 2=down, 3=left, 4=right
+env:render()
+```
+
+Simple grid navigation. Agent moves from start to goal avoiding obstacles.
+
+- **Observation**: 2D (x, y position)
+- **Actions**: 4 (up, down, left, right)
+- **Reward**: -0.1 per step, +1.0 for reaching goal
+
 ---
 
 ## Cognitive Architecture Modules ##
@@ -233,6 +323,44 @@ OpenCog-style hypergraph knowledge representation.
 - `decayAttention()`: Decay all attention values
 - `recordEntelechyFailure(description, severity)`: Store bug (per spec!)
 - `recordTranscend(subject, target, quality)`: Store transcend event
+- `save(filename)`: Save AtomSpace to file
+- `load(filename)`: Load AtomSpace from file
+- `clone()`: Create a deep copy of the AtomSpace
+- `merge(other, conflictResolution)`: Merge another AtomSpace into this one
+
+<a name="nn.EpisodicMemory"></a>
+### nn.EpisodicMemory ###
+
+```lua
+memory = nn.EpisodicMemory(config)
+memory:beginEpisode(context)
+memory:addStep(state, action, reward, nextState, done, metadata)
+episode = memory:endEpisode(success, metadata)
+similar = memory:retrieveByState(state, k)
+memory:consolidate()
+```
+
+Long-term episodic memory for cognitive agents with semantic indexing, similarity-based retrieval, and memory consolidation.
+
+**Config options:**
+- `maxEpisodes`: Maximum episodes to store (default: 1000)
+- `maxStepsPerEpisode`: Maximum steps per episode (default: 1000)
+- `embeddingDim`: Dimension for episode embeddings (default: 64)
+- `similarityThreshold`: Threshold for consolidation (default: 0.8)
+- `consolidationRate`: Rate of importance increase on merge (default: 0.1)
+- `forgettingRate`: Rate of importance decay (default: 0.01)
+
+**Methods:**
+- `beginEpisode(context)`: Start recording a new episode
+- `addStep(state, action, reward, nextState, done, metadata)`: Add step to current episode
+- `endEpisode(success, metadata)`: Finish episode and compute importance
+- `retrieveByState(state, k)`: Retrieve k most similar episodes
+- `retrieveByTag(tag, k)`: Retrieve episodes with matching tag
+- `retrieveByContext(context, k)`: Retrieve episodes with matching context
+- `consolidate()`: Merge similar episodes to save memory
+- `save(filename)`: Save all episodes to file
+- `load(filename)`: Load episodes from file
+- `getStats()`: Get memory statistics
 
 <a name="nn.CognitiveAgent"></a>
 ### nn.CognitiveAgent ###

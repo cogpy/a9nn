@@ -215,6 +215,7 @@ require('nn.StochasticGradient')
 -- Agent-Neuro: Reinforcement Learning and Cognitive Agent modules
 require('nn.Agent')
 require('nn.ReplayMemory')
+require('nn.PrioritizedReplayMemory')
 require('nn.Reinforce')
 require('nn.PolicyGradientCriterion')
 require('nn.ValueFunction')
@@ -222,9 +223,13 @@ require('nn.ActorCritic')
 require('nn.QLearning')
 require('nn.AdvantageActorCritic')
 
+-- Agent-Neuro: Environments for RL testing
+require('nn.Environment')
+
 -- Agent-Neuro: Cognitive Architecture modules
 require('nn.Personality')
 require('nn.AtomSpace')
+require('nn.EpisodicMemory')
 require('nn.CognitiveAgent')
 require('nn.OntogeneticKernel')
 require('nn.NeuroAgent')

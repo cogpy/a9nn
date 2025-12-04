@@ -573,6 +573,245 @@ function agentNeuroTest.AdvantageActorCritic_computeAdvantages()
 end
 
 ------------------------------------------------------------------------
+-- PrioritizedReplayMemory Tests
+------------------------------------------------------------------------
+
+function agentNeuroTest.PrioritizedReplayMemory_creation()
+   local mem = nn.PrioritizedReplayMemory(1000, 4)
+   mytester:assert(mem ~= nil, 'PrioritizedReplayMemory should be created')
+   mytester:asserteq(mem.capacity, 1000, 'Capacity should be 1000')
+   mytester:asserteq(mem:getSize(), 0, 'Initial size should be 0')
+end
+
+function agentNeuroTest.PrioritizedReplayMemory_push()
+   local mem = nn.PrioritizedReplayMemory(100, 4)
+   local obs = torch.randn(4)
+   local nextObs = torch.randn(4)
+   mem:push(obs, 1, 1.0, nextObs, false)
+   mytester:asserteq(mem:getSize(), 1, 'Size should be 1 after push')
+end
+
+function agentNeuroTest.PrioritizedReplayMemory_sample()
+   local mem = nn.PrioritizedReplayMemory(100, 4)
+   for i = 1, 50 do
+      mem:push(torch.randn(4), torch.random(1, 2), torch.randn(1)[1], torch.randn(4), false)
+   end
+
+   local batch = mem:sample(32)
+   mytester:asserteq(batch.observations:size(1), 32, 'Batch should have 32 observations')
+   mytester:assert(batch.weights ~= nil, 'Batch should include importance weights')
+   mytester:assert(batch.treeIndices ~= nil, 'Batch should include tree indices')
+end
+
+function agentNeuroTest.PrioritizedReplayMemory_updatePriorities()
+   local mem = nn.PrioritizedReplayMemory(100, 4)
+   for i = 1, 20 do
+      mem:push(torch.randn(4), 1, 1.0, torch.randn(4), false)
+   end
+
+   local batch = mem:sample(10)
+   local tdErrors = torch.randn(10):abs()
+   mem:updatePriorities(batch.treeIndices, tdErrors)
+   mytester:assert(mem.maxPriority >= 0, 'Max priority should be non-negative')
+end
+
+function agentNeuroTest.PrioritizedReplayMemory_betaAnnealing()
+   local mem = nn.PrioritizedReplayMemory(100, 4, {beta = 0.4, betaIncrement = 0.1})
+   for i = 1, 20 do
+      mem:push(torch.randn(4), 1, 1.0, torch.randn(4), false)
+   end
+
+   local initialBeta = mem:getBeta()
+   mem:sample(10)
+   mytester:assert(mem:getBeta() > initialBeta, 'Beta should increase after sampling')
+end
+
+------------------------------------------------------------------------
+-- EpisodicMemory Tests
+------------------------------------------------------------------------
+
+function agentNeuroTest.EpisodicMemory_creation()
+   local em = nn.EpisodicMemory()
+   mytester:assert(em ~= nil, 'EpisodicMemory should be created')
+   mytester:asserteq(em:getEpisodeCount(), 0, 'Initial episode count should be 0')
+end
+
+function agentNeuroTest.EpisodicMemory_episode()
+   local em = nn.EpisodicMemory()
+   em:beginEpisode({task = 'test'})
+   em:addStep(torch.randn(4), 1, 1.0, torch.randn(4), false)
+   em:addStep(torch.randn(4), 2, 0.5, torch.randn(4), false)
+   local episode = em:endEpisode(true)
+
+   mytester:assert(episode ~= nil, 'Episode should be created')
+   mytester:asserteq(#episode.steps, 2, 'Episode should have 2 steps')
+   mytester:asserteq(episode.totalReward, 1.5, 'Total reward should be 1.5')
+end
+
+function agentNeuroTest.EpisodicMemory_retrieval()
+   local em = nn.EpisodicMemory()
+
+   -- Add a few episodes
+   for ep = 1, 5 do
+      em:beginEpisode({episode = ep})
+      for step = 1, 3 do
+         em:addStep(torch.randn(4), 1, 1.0, torch.randn(4), false)
+      end
+      em:endEpisode(true)
+   end
+
+   local results = em:retrieveByState(torch.randn(4), 3)
+   mytester:asserteq(#results, 3, 'Should retrieve 3 episodes')
+end
+
+function agentNeuroTest.EpisodicMemory_stats()
+   local em = nn.EpisodicMemory()
+   em:beginEpisode()
+   em:addStep(torch.randn(4), 1, 2.0, torch.randn(4), true)
+   em:endEpisode(true)
+
+   local stats = em:getStats()
+   mytester:asserteq(stats.episodeCount, 1, 'Should have 1 episode')
+   mytester:asserteq(stats.totalSteps, 1, 'Should have 1 step')
+   mytester:asserteq(stats.totalReward, 2.0, 'Total reward should be 2.0')
+end
+
+function agentNeuroTest.EpisodicMemory_consolidation()
+   local em = nn.EpisodicMemory({similarityThreshold = 0.99})
+
+   -- Add similar episodes
+   local baseState = torch.randn(4)
+   for ep = 1, 5 do
+      em:beginEpisode()
+      em:addStep(baseState + torch.randn(4) * 0.01, 1, 1.0, baseState, false)
+      em:endEpisode(true)
+   end
+
+   local before = em:getEpisodeCount()
+   local consolidated = em:consolidate()
+   -- May or may not consolidate depending on similarity
+   mytester:assert(consolidated >= 0, 'Consolidation should return count')
+end
+
+------------------------------------------------------------------------
+-- Environment Tests
+------------------------------------------------------------------------
+
+function agentNeuroTest.Environment_CartPole_creation()
+   local env = nn.CartPoleEnv()
+   mytester:assert(env ~= nil, 'CartPoleEnv should be created')
+   mytester:asserteq(env.observationDim, 4, 'Observation dim should be 4')
+   mytester:asserteq(env.actionDim, 2, 'Action dim should be 2')
+end
+
+function agentNeuroTest.Environment_CartPole_reset()
+   local env = nn.CartPoleEnv()
+   local obs = env:reset()
+   mytester:asserteq(obs:size(1), 4, 'Observation should have 4 elements')
+   mytester:assert(not env.done, 'Environment should not be done after reset')
+end
+
+function agentNeuroTest.Environment_CartPole_step()
+   local env = nn.CartPoleEnv()
+   env:reset()
+   local obs, reward, done, info = env:step(1)
+   mytester:asserteq(obs:size(1), 4, 'Observation should have 4 elements')
+   mytester:assert(reward >= 0, 'Reward should be non-negative')
+   mytester:assert(info ~= nil, 'Info should be returned')
+end
+
+function agentNeuroTest.Environment_GridWorld_creation()
+   local env = nn.GridWorldEnv({gridSize = 5})
+   mytester:assert(env ~= nil, 'GridWorldEnv should be created')
+   mytester:asserteq(env.gridSize, 5, 'Grid size should be 5')
+end
+
+function agentNeuroTest.Environment_GridWorld_episode()
+   local env = nn.GridWorldEnv({gridSize = 3, maxSteps = 10})
+   local obs = env:reset()
+   local totalReward = 0
+   while not env.done do
+      local action = env:sampleAction()
+      local _, reward, done, info = env:step(action)
+      totalReward = totalReward + reward
+   end
+   mytester:assert(true, 'GridWorld episode should complete')
+end
+
+function agentNeuroTest.Environment_make()
+   local env = nn.Environment.make("CartPole")
+   mytester:assert(env ~= nil, 'Environment.make should create CartPole')
+   mytester:asserteq(env.name, "CartPole-v1", 'Name should be CartPole-v1')
+end
+
+function agentNeuroTest.Environment_MountainCar()
+   local env = nn.MountainCarEnv()
+   local obs = env:reset()
+   mytester:asserteq(obs:size(1), 2, 'MountainCar observation should have 2 elements')
+   local _, reward, _, _ = env:step(2)  -- No action
+   mytester:asserteq(reward, -1, 'MountainCar step reward should be -1')
+end
+
+function agentNeuroTest.Environment_Bandit()
+   local env = nn.BanditEnv({nArms = 5})
+   env:reset()
+   local _, reward, _, _ = env:step(1)
+   mytester:assert(reward == 0 or reward == 1, 'Bandit reward should be 0 or 1')
+   mytester:assert(env:getOptimalArm() >= 1 and env:getOptimalArm() <= 5, 'Optimal arm should be valid')
+end
+
+------------------------------------------------------------------------
+-- AtomSpace Serialization Tests
+------------------------------------------------------------------------
+
+function agentNeuroTest.AtomSpace_saveLoad()
+   local as = nn.AtomSpace()
+   as:addNode('ConceptNode', 'TestNode', {0.9, 0.8}, 0.7)
+   as:addNode('ConceptNode', 'OtherNode', {0.5, 0.5}, 0.5)
+   as:addLink('InheritanceLink', {'TestNode', 'OtherNode'}, {0.8, 0.9})
+
+   -- Save and load
+   local filename = '/tmp/test_atomspace.t7'
+   as:save(filename)
+
+   local as2 = nn.AtomSpace()
+   as2:load(filename)
+
+   local stats = as2:getStats()
+   mytester:asserteq(stats.nodeCount, 2, 'Loaded AtomSpace should have 2 nodes')
+   mytester:asserteq(stats.linkCount, 1, 'Loaded AtomSpace should have 1 link')
+
+   -- Cleanup
+   os.remove(filename)
+end
+
+function agentNeuroTest.AtomSpace_clone()
+   local as = nn.AtomSpace()
+   as:addNode('ConceptNode', 'Original', {0.9, 0.9}, 0.9)
+
+   local cloned = as:clone()
+   local originalNode = as:getNode('ConceptNode', 'Original')
+   local clonedNode = cloned:getNode('ConceptNode', 'Original')
+
+   mytester:assert(clonedNode ~= nil, 'Cloned AtomSpace should have the node')
+   mytester:asserteq(clonedNode:getStrength(), 0.9, 'Cloned node should have same strength')
+end
+
+function agentNeuroTest.AtomSpace_merge()
+   local as1 = nn.AtomSpace()
+   as1:addNode('ConceptNode', 'Node1', {0.9, 0.9})
+
+   local as2 = nn.AtomSpace()
+   as2:addNode('ConceptNode', 'Node2', {0.8, 0.8})
+
+   local mergedCount = as1:merge(as2)
+   mytester:asserteq(mergedCount, 1, 'Should merge 1 new node')
+
+   local stats = as1:getStats()
+   mytester:asserteq(stats.nodeCount, 2, 'Merged AtomSpace should have 2 nodes')
+end
+
+------------------------------------------------------------------------
 -- Run tests
 ------------------------------------------------------------------------
 

@@ -424,6 +424,168 @@ function AtomSpace:export()
    return data
 end
 
+-- Save AtomSpace to file
+function AtomSpace:save(filename)
+   local data = self:export()
+   data.stats = self.stats
+   torch.save(filename, data)
+end
+
+-- Load AtomSpace from file
+function AtomSpace:load(filename)
+   local data = torch.load(filename)
+   self:import(data)
+   if data.stats then
+      self.stats = data.stats
+   end
+end
+
+-- Import from exported data
+function AtomSpace:import(data)
+   -- Clear existing data
+   self:clear()
+
+   -- Restore configuration
+   if data.config then
+      self.attentionDecay = data.config.attentionDecay or self.attentionDecay
+      self.maxAtoms = data.config.maxAtoms or self.maxAtoms
+      self.entertainmentWeight = data.config.entertainmentWeight or self.entertainmentWeight
+   end
+
+   -- First pass: create all atoms without outgoing references
+   local uuidMap = {}  -- old UUID -> new atom
+   for uuid, atomData in pairs(data.atoms) do
+      if not atomData.outgoing then
+         -- It's a node
+         local node = Atom.new(
+            atomData.type,
+            atomData.name,
+            atomData.truthValue,
+            atomData.attention,
+            atomData.metadata
+         )
+         node.uuid = atomData.uuid  -- Preserve UUID
+         self.atoms[node.uuid] = node
+         uuidMap[uuid] = node
+
+         -- Index it
+         self.nodeIndex[node.type] = self.nodeIndex[node.type] or {}
+         self.nodeIndex[node.type][node.name] = node.uuid
+
+         -- Add to attention heap
+         table.insert(self.attentionHeap, {uuid = node.uuid, attention = node.attention})
+      end
+   end
+
+   -- Second pass: create all links with proper references
+   for uuid, atomData in pairs(data.atoms) do
+      if atomData.outgoing then
+         -- Resolve outgoing references
+         local outgoing = {}
+         for _, outUUID in ipairs(atomData.outgoing) do
+            local outAtom = uuidMap[outUUID] or self.atoms[outUUID]
+            if outAtom then
+               table.insert(outgoing, outAtom)
+            end
+         end
+
+         -- Create link
+         local link = Link.new(
+            atomData.type,
+            outgoing,
+            atomData.truthValue,
+            atomData.attention,
+            atomData.metadata
+         )
+         link.uuid = atomData.uuid  -- Preserve UUID
+         self.atoms[link.uuid] = link
+         uuidMap[uuid] = link
+
+         -- Index it
+         self.linkIndex[link.type] = self.linkIndex[link.type] or {}
+         local hash = self:_hashOutgoing(outgoing)
+         self.linkIndex[link.type][hash] = link.uuid
+      end
+   end
+end
+
+-- Merge another AtomSpace into this one
+function AtomSpace:merge(other, conflictResolution)
+   conflictResolution = conflictResolution or "keep_higher_confidence"
+
+   local otherData = other:export()
+   local mergedCount = 0
+
+   for uuid, atomData in pairs(otherData.atoms) do
+      local existing = self.atoms[uuid]
+
+      if existing then
+         -- Handle conflict
+         if conflictResolution == "keep_higher_confidence" then
+            if atomData.truthValue[2] > existing:getConfidence() then
+               existing:setTruthValue(atomData.truthValue[1], atomData.truthValue[2])
+               existing.attention = math.max(existing.attention, atomData.attention)
+            end
+         elseif conflictResolution == "average" then
+            local newStrength = (atomData.truthValue[1] + existing:getStrength()) / 2
+            local newConfidence = (atomData.truthValue[2] + existing:getConfidence()) / 2
+            existing:setTruthValue(newStrength, newConfidence)
+            existing.attention = (existing.attention + atomData.attention) / 2
+         end
+      else
+         -- Add new atom
+         if not atomData.outgoing then
+            self:addNode(
+               atomData.type,
+               atomData.name,
+               atomData.truthValue,
+               atomData.attention,
+               atomData.metadata
+            )
+            mergedCount = mergedCount + 1
+         end
+      end
+   end
+
+   -- Second pass for links (to ensure nodes exist first)
+   for uuid, atomData in pairs(otherData.atoms) do
+      if atomData.outgoing and not self.atoms[uuid] then
+         -- Resolve outgoing names
+         local outgoingNames = {}
+         for _, outUUID in ipairs(atomData.outgoing) do
+            local outAtom = self.atoms[outUUID]
+            if outAtom and outAtom.name then
+               table.insert(outgoingNames, outAtom.name)
+            end
+         end
+
+         if #outgoingNames == #atomData.outgoing then
+            self:addLink(
+               atomData.type,
+               outgoingNames,
+               atomData.truthValue,
+               atomData.attention,
+               atomData.metadata
+            )
+            mergedCount = mergedCount + 1
+         end
+      end
+   end
+
+   return mergedCount
+end
+
+-- Clone this AtomSpace
+function AtomSpace:clone()
+   local newSpace = nn.AtomSpace({
+      attentionDecay = self.attentionDecay,
+      maxAtoms = self.maxAtoms,
+      entertainmentWeight = self.entertainmentWeight
+   })
+   newSpace:import(self:export())
+   return newSpace
+end
+
 function AtomSpace:__tostring__()
    local stats = self:getStats()
    return torch.type(self) .. string.format(
