@@ -1,0 +1,106 @@
+name: Lint
+
+on:
+  push:
+    branches: [ main, master, develop, copilot/** ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+
+jobs:
+  luacheck:
+    name: Luacheck
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Install Lua and Luarocks
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.3 luarocks
+      
+      - name: Install luacheck
+        run: |
+          sudo luarocks install luacheck
+      
+      - name: Run luacheck on all Lua files
+        id: luacheck
+        continue-on-error: true
+        run: |
+          echo "Running luacheck with .luacheckrc config..."
+          luacheck . --config .luacheckrc --formatter plain 2>&1 | tee luacheck-output.log
+          exit ${PIPESTATUS[0]}
+      
+      - name: Check specific module files
+        if: always()
+        continue-on-error: true
+        run: |
+          echo "Checking core modules..."
+          luacheck \
+            Module.lua \
+            Container.lua \
+            Sequential.lua \
+            Linear.lua \
+            init.lua \
+            --config .luacheckrc \
+            --formatter plain
+      
+      - name: Check NNECCO modules
+        if: always()
+        continue-on-error: true
+        run: |
+          echo "Checking NNECCO modules..."
+          if [ -f EchoReservoirProcessor.lua ]; then
+            luacheck \
+              EchoReservoirProcessor.lua \
+              ConsciousnessLayerProcessor.lua \
+              EmotionProcessingUnit.lua \
+              LLaMAOrchestrator.lua \
+              NNECCOAgent.lua \
+              --config .luacheckrc \
+              --formatter plain || true
+          fi
+      
+      - name: Check Agent modules
+        if: always()
+        continue-on-error: true
+        run: |
+          echo "Checking Agent modules..."
+          if [ -f Agent.lua ]; then
+            luacheck \
+              Agent.lua \
+              CognitiveAgent.lua \
+              NeuroAgent.lua \
+              Personality.lua \
+              AtomSpace.lua \
+              --config .luacheckrc \
+              --formatter plain || true
+          fi
+      
+      - name: Summary
+        if: always()
+        run: |
+          echo "=== Luacheck Summary ==="
+          if [ -f luacheck-output.log ]; then
+            echo "Full output saved to luacheck-output.log"
+            echo "Last 50 lines:"
+            tail -n 50 luacheck-output.log
+          fi
+          echo ""
+          echo "Luacheck result: ${{ steps.luacheck.outcome }}"
+      
+      - name: Upload luacheck results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: luacheck-results
+          path: luacheck-output.log
+          retention-days: 30
+      
+      - name: Fail if luacheck found critical issues
+        if: steps.luacheck.outcome == 'failure'
+        run: |
+          echo "❌ Luacheck found issues that need to be fixed"
+          exit 1

@@ -1,0 +1,152 @@
+name: Documentation
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'doc/**'
+      - 'mkdocs.yml'
+      - '*.md'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'doc/**'
+      - 'mkdocs.yml'
+  workflow_dispatch:
+
+jobs:
+  build-docs:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+      
+      - name: Check for MkDocs
+        id: check-mkdocs
+        run: |
+          if [ -f mkdocs.yml ]; then
+            echo "has_mkdocs=true" >> $GITHUB_OUTPUT
+            echo "✓ MkDocs configuration found"
+          else
+            echo "has_mkdocs=false" >> $GITHUB_OUTPUT
+            echo "⚠ No MkDocs configuration"
+          fi
+      
+      - name: Install MkDocs
+        if: steps.check-mkdocs.outputs.has_mkdocs == 'true'
+        run: |
+          pip install mkdocs mkdocs-material
+      
+      - name: Build MkDocs site
+        if: steps.check-mkdocs.outputs.has_mkdocs == 'true'
+        run: |
+          mkdocs build --strict
+      
+      - name: Validate documentation structure
+        run: |
+          echo "=== Documentation Structure ==="
+          if [ -d doc ]; then
+            echo "Documentation directory found"
+            echo "Files:"
+            find doc -name "*.md" -type f | sort
+            
+            # Check for key documentation files
+            echo ""
+            echo "Checking for key documentation..."
+            [ -f doc/module.md ] && echo "✓ module.md" || echo "⚠ module.md missing"
+            [ -f doc/training.md ] && echo "✓ training.md" || echo "⚠ training.md missing"
+            [ -f doc/testing.md ] && echo "✓ testing.md" || echo "⚠ testing.md missing"
+            [ -f README.md ] && echo "✓ README.md" || echo "⚠ README.md missing"
+          else
+            echo "⚠ No doc directory found"
+          fi
+      
+      - name: Check markdown files
+        run: |
+          echo "=== Markdown Files ==="
+          find . -name "*.md" -not -path "./node_modules/*" -not -path "./.git/*" | while read file; do
+            echo "Checking: $file"
+            # Basic validation - check if file is not empty
+            if [ -s "$file" ]; then
+              echo "  ✓ Not empty"
+            else
+              echo "  ⚠ Empty file"
+            fi
+          done
+      
+      - name: Generate documentation index
+        run: |
+          cat > docs-index.md << 'EOF'
+          # a9nn Documentation Index
+          
+          ## Core Documentation
+          
+          - [README](README.md) - Project overview
+          - [Overview](doc/overview.md) - Package essentials
+          - [Module](doc/module.md) - Base module documentation
+          - [Containers](doc/containers.md) - Container modules
+          - [Simple Layers](doc/simple.md) - Simple layer modules
+          - [Transfer Functions](doc/transfer.md) - Activation functions
+          - [Table Layers](doc/table.md) - Table manipulation
+          - [Convolution Layers](doc/convolution.md) - Convolution modules
+          - [Criterions](doc/criterion.md) - Loss functions
+          - [Training](doc/training.md) - Training neural networks
+          - [Testing](doc/testing.md) - Testing modules
+          
+          ## Agent System Documentation
+          
+          - [Agent-Neuro](doc/agent-neuro.md) - Neuro-Sama inspired agent system
+          - [NNECCO Usage](doc/nnecco-usage.md) - NNECCO cognitive coprocessor
+          
+          ## Implementation Details
+          
+          - [NNECCO Implementation](NNECCO-IMPLEMENTATION.md) - Technical details
+          - [Implementation Summary](IMPLEMENTATION-SUMMARY.md) - Overview
+          
+          ## Contributing
+          
+          - [Contributing Guide](CONTRIBUTING.md) - How to contribute
+          - [Copyright](COPYRIGHT.txt) - License information
+          
+          EOF
+          
+          echo "Documentation index generated"
+          cat docs-index.md
+      
+      - name: Upload documentation
+        uses: actions/upload-artifact@v3
+        with:
+          name: documentation
+          path: |
+            doc/
+            *.md
+            docs-index.md
+            site/
+          retention-days: 90
+      
+      - name: Deploy to GitHub Pages
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && steps.check-mkdocs.outputs.has_mkdocs == 'true'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          cname: a9nn.cogpy.dev
+          enable_jekyll: false
+      
+      - name: Summary
+        run: |
+          echo "=== Documentation Build Summary ==="
+          echo "MkDocs: ${{ steps.check-mkdocs.outputs.has_mkdocs }}"
+          if [ "${{ steps.check-mkdocs.outputs.has_mkdocs }}" == "true" ]; then
+            echo "✓ Documentation built successfully"
+          else
+            echo "⚠ MkDocs not configured, using basic documentation"
+          fi

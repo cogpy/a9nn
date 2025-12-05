@@ -1,0 +1,157 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master, develop, copilot/** ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Install Lua and Luarocks
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.3 luarocks
+      
+      - name: Install luacheck
+        run: |
+          sudo luarocks install luacheck
+      
+      - name: Run luacheck
+        continue-on-error: true
+        run: |
+          luacheck . --config .luacheckrc --formatter plain | tee luacheck.log
+      
+      - name: Upload lint results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: lint-results
+          path: luacheck.log
+          retention-days: 7
+
+  build-and-test:
+    name: Build and Test (${{ matrix.lua }})
+    runs-on: ubuntu-20.04
+    needs: lint
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        lua: [LUAJIT21, LUA51]
+    
+    env:
+      TORCH_LUA_VERSION: ${{ matrix.lua }}
+      INSTALL_PREFIX: ${{ github.workspace }}/torch/install
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Setup cache key
+        id: cache-key
+        run: |
+          echo "openblas-key=${{ runner.os }}-gcc-openblas-v1" >> $GITHUB_OUTPUT
+          echo "torch-key=${{ runner.os }}-gcc-${{ matrix.lua }}-torch-v1" >> $GITHUB_OUTPUT
+      
+      - name: Cache OpenBLAS
+        uses: actions/cache@v3
+        with:
+          path: ${{ github.workspace }}/OpenBlasInstall
+          key: ${{ steps.cache-key.outputs.openblas-key }}
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake gfortran gcc-multilib gfortran-multilib liblapack-dev \
+            build-essential curl libreadline-dev git-core \
+            libjpeg-dev libpng-dev ncurses-dev imagemagick \
+            libzmq3-dev unzip gnuplot
+      
+      - name: Build OpenBLAS
+        if: steps.cache-openblas.outputs.cache-hit != 'true'
+        run: |
+          cd /tmp
+          git clone https://github.com/xianyi/OpenBLAS.git -b master --depth 1
+          cd OpenBLAS
+          make NO_AFFINITY=1 -j$(nproc)
+          make PREFIX=${{ github.workspace }}/OpenBlasInstall install
+      
+      - name: Cache Torch
+        uses: actions/cache@v3
+        with:
+          path: ${{ github.workspace }}/torch
+          key: ${{ steps.cache-key.outputs.torch-key }}
+      
+      - name: Clone and build Torch
+        if: steps.cache-torch.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/torch/distro.git ${{ github.workspace }}/torch --recursive --depth 1
+          cd ${{ github.workspace }}/torch
+          mkdir -p build && cd build
+          export CMAKE_LIBRARY_PATH=${{ github.workspace }}/OpenBlasInstall/include:${{ github.workspace }}/OpenBlasInstall/lib:$CMAKE_LIBRARY_PATH
+          cmake .. \
+            -DCMAKE_INSTALL_PREFIX="${{ env.INSTALL_PREFIX }}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWITH_${{ matrix.lua }}=ON
+          make -j$(nproc)
+          make install
+      
+      - name: Build a9nn
+        run: |
+          export LD_LIBRARY_PATH=${{ env.INSTALL_PREFIX }}/lib:$LD_LIBRARY_PATH
+          export PATH=${{ env.INSTALL_PREFIX }}/bin:$PATH
+          ${{ env.INSTALL_PREFIX }}/bin/luarocks make rocks/nn-scm-1.rockspec
+      
+      - name: Run tests
+        run: |
+          export LD_LIBRARY_PATH=${{ env.INSTALL_PREFIX }}/lib:$LD_LIBRARY_PATH
+          export PATH=${{ env.INSTALL_PREFIX }}/bin:$PATH
+          TESTLUA=$(which luajit lua | head -n 1)
+          $TESTLUA -lnn -e "t=nn.test(); if t.errors[1] then os.exit(1) end"
+      
+      - name: Test module imports
+        run: |
+          export LD_LIBRARY_PATH=${{ env.INSTALL_PREFIX }}/lib:$LD_LIBRARY_PATH
+          export PATH=${{ env.INSTALL_PREFIX }}/bin:$PATH
+          TESTLUA=$(which luajit lua | head -n 1)
+          $TESTLUA -lnn -e "
+            print('Testing core modules...')
+            assert(nn.Module, 'Module not found')
+            assert(nn.Sequential, 'Sequential not found')
+            assert(nn.Linear, 'Linear not found')
+            assert(nn.Tanh, 'Tanh not found')
+            assert(nn.MSECriterion, 'MSECriterion not found')
+            print('✓ All core modules loaded successfully')
+          "
+  
+  summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [lint, build-and-test]
+    if: always()
+    
+    steps:
+      - name: Check results
+        run: |
+          echo "=== CI Summary ==="
+          echo "Lint: ${{ needs.lint.result }}"
+          echo "Build and Test: ${{ needs.build-and-test.result }}"
+          
+          if [ "${{ needs.build-and-test.result }}" != "success" ]; then
+            echo "❌ CI failed"
+            exit 1
+          fi
+          
+          echo "✓ CI passed"

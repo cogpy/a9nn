@@ -1,0 +1,132 @@
+name: Build
+
+on:
+  push:
+    branches: [ main, master, develop, copilot/** ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }} with ${{ matrix.compiler }} and ${{ matrix.lua }}
+    runs-on: ${{ matrix.os }}
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-20.04, ubuntu-22.04]
+        compiler: [gcc, clang]
+        lua: [LUAJIT21, LUA51, LUA52]
+        exclude:
+          # Reduce matrix size - test main combinations
+          - os: ubuntu-22.04
+            compiler: clang
+            lua: LUA52
+          - os: ubuntu-22.04
+            compiler: gcc
+            lua: LUA51
+    
+    env:
+      TORCH_LUA_VERSION: ${{ matrix.lua }}
+      CC: ${{ matrix.compiler }}
+      INSTALL_PREFIX: ${{ github.workspace }}/torch/install
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Setup cache key
+        id: cache-key
+        run: |
+          echo "openblas-key=${{ runner.os }}-${{ matrix.compiler }}-openblas-v1" >> $GITHUB_OUTPUT
+          echo "torch-key=${{ runner.os }}-${{ matrix.compiler }}-${{ matrix.lua }}-torch-v1" >> $GITHUB_OUTPUT
+      
+      - name: Cache OpenBLAS
+        id: cache-openblas
+        uses: actions/cache@v3
+        with:
+          path: ${{ github.workspace }}/OpenBlasInstall
+          key: ${{ steps.cache-key.outputs.openblas-key }}
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            gfortran \
+            gcc-multilib \
+            gfortran-multilib \
+            liblapack-dev \
+            build-essential \
+            gcc \
+            g++ \
+            curl \
+            libreadline-dev \
+            git-core \
+            libjpeg-dev \
+            libpng-dev \
+            ncurses-dev \
+            imagemagick \
+            libzmq3-dev \
+            unzip \
+            gnuplot \
+            gnuplot-x11
+      
+      - name: Build OpenBLAS
+        if: steps.cache-openblas.outputs.cache-hit != 'true'
+        run: |
+          cd /tmp
+          git clone https://github.com/xianyi/OpenBLAS.git -b master --depth 1
+          cd OpenBLAS
+          make NO_AFFINITY=1 -j$(nproc) 2>/dev/null >/dev/null || make NO_AFFINITY=1 -j$(nproc)
+          make PREFIX=${{ github.workspace }}/OpenBlasInstall install
+      
+      - name: Cache Torch
+        id: cache-torch
+        uses: actions/cache@v3
+        with:
+          path: ${{ github.workspace }}/torch
+          key: ${{ steps.cache-key.outputs.torch-key }}
+      
+      - name: Clone and build Torch
+        if: steps.cache-torch.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/torch/distro.git ${{ github.workspace }}/torch --recursive --depth 1
+          cd ${{ github.workspace }}/torch
+          git submodule update --init --recursive
+          mkdir -p build && cd build
+          export CMAKE_LIBRARY_PATH=${{ github.workspace }}/OpenBlasInstall/include:${{ github.workspace }}/OpenBlasInstall/lib:$CMAKE_LIBRARY_PATH
+          cmake .. \
+            -DCMAKE_INSTALL_PREFIX="${{ env.INSTALL_PREFIX }}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWITH_${{ matrix.lua }}=ON
+          make -j$(nproc)
+          make install
+      
+      - name: Build a9nn
+        run: |
+          export LD_LIBRARY_PATH=${{ env.INSTALL_PREFIX }}/lib:$LD_LIBRARY_PATH
+          export PATH=${{ env.INSTALL_PREFIX }}/bin:$PATH
+          ${{ env.INSTALL_PREFIX }}/bin/luarocks make rocks/nn-scm-1.rockspec
+      
+      - name: Verify installation
+        run: |
+          export LD_LIBRARY_PATH=${{ env.INSTALL_PREFIX }}/lib:$LD_LIBRARY_PATH
+          export PATH=${{ env.INSTALL_PREFIX }}/bin:$PATH
+          TESTLUA=$(which luajit lua | head -n 1)
+          echo "Using Lua interpreter: $TESTLUA"
+          $TESTLUA -lnn -e "print('nn module loaded successfully')"
+          $TESTLUA -lnn -e "print('nn version:', nn.version or 'unknown')"
+      
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: build-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.lua }}
+          path: |
+            ${{ env.INSTALL_PREFIX }}/lib/lua/
+            ${{ env.INSTALL_PREFIX }}/share/lua/
+          retention-days: 7

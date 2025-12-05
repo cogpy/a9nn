@@ -1,0 +1,246 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'release-*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-20.04
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=${GITHUB_REF#refs/tags/}
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Release version: $VERSION"
+      
+      - name: Generate changelog
+        id: changelog
+        run: |
+          echo "Generating changelog..."
+          cat > CHANGELOG.md << 'EOF'
+          # Changelog for ${{ steps.get_version.outputs.version }}
+          
+          ## What's Changed
+          
+          This release includes:
+          - a9nn neural network framework
+          - NNECCO cognitive agent system
+          - Agent-Neuro reinforcement learning modules
+          - Comprehensive test suites
+          
+          ## Installation
+          
+          ```bash
+          luarocks install nn-scm-1.rockspec
+          ```
+          
+          ## Components
+          
+          - **Core Neural Network Modules**: Sequential, Linear, Convolution layers, etc.
+          - **Transfer Functions**: Tanh, Sigmoid, ReLU, etc.
+          - **Loss Functions**: MSE, ClassNLL, CrossEntropy, etc.
+          - **Agent System**: Personality, AtomSpace, Cognitive agents
+          - **NNECCO**: Echo State Networks, Consciousness layers, Emotion processing
+          
+          Full documentation available at: https://github.com/cogpy/a9nn
+          EOF
+          
+          echo "Changelog generated"
+      
+      - name: Create release archive
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          ARCHIVE_NAME="a9nn-${VERSION}.tar.gz"
+          
+          echo "Creating release archive: ${ARCHIVE_NAME}"
+          
+          # Create archive excluding .git and build artifacts
+          tar -czf ${ARCHIVE_NAME} \
+            --exclude='.git' \
+            --exclude='build' \
+            --exclude='*.o' \
+            --exclude='*.so' \
+            --exclude='.github' \
+            .
+          
+          echo "Archive created: ${ARCHIVE_NAME}"
+          ls -lh ${ARCHIVE_NAME}
+      
+      - name: Create rockspec for release
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          VERSION_NUM=$(echo $VERSION | sed 's/^v//')
+          
+          cat > rocks/nn-${VERSION_NUM}-1.rockspec << EOF
+          package = "nn"
+          version = "${VERSION_NUM}-1"
+          
+          source = {
+             url = "git://github.com/cogpy/a9nn.git",
+             tag = "${VERSION}"
+          }
+          
+          description = {
+             summary = "Neural Network package for Torch",
+             detailed = [[
+                a9nn is a comprehensive neural network framework for Torch7/LuaJIT,
+                featuring traditional neural network layers, reinforcement learning agents,
+                and advanced cognitive architectures including NNECCO (Neural Network
+                Embodied Cognitive Coprocessor Orchestrator).
+             ]],
+             homepage = "https://github.com/cogpy/a9nn",
+             license = "BSD"
+          }
+          
+          dependencies = {
+             "torch >= 7.0",
+             "luaffi",
+             "moses >= 1.0"
+          }
+          
+          build = {
+             type = "command",
+             build_command = [[
+          cmake -E make_directory build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="\$(LUA_BINDIR)/.." -DCMAKE_INSTALL_PREFIX="\$(PREFIX)" -DLUA_INCDIR="\$(LUA_INCDIR)" -DLUA_LIBDIR="\$(LUA_LIBDIR)" && \$(MAKE)
+          ]],
+             install_command = "cd build && \$(MAKE) install"
+          }
+          EOF
+          
+          echo "Rockspec created for version ${VERSION_NUM}"
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.get_version.outputs.version }}
+          name: Release ${{ steps.get_version.outputs.version }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: false
+          files: |
+            a9nn-${{ steps.get_version.outputs.version }}.tar.gz
+            rocks/nn-*.rockspec
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Build documentation
+        continue-on-error: true
+        run: |
+          # Check if mkdocs is configured
+          if [ -f mkdocs.yml ]; then
+            echo "MkDocs configuration found"
+            # Would build docs here if mkdocs is installed
+          fi
+      
+      - name: Summary
+        run: |
+          echo "=== Release Summary ==="
+          echo "Version: ${{ steps.get_version.outputs.version }}"
+          echo "Archive: a9nn-${{ steps.get_version.outputs.version }}.tar.gz"
+          echo "✓ Release created successfully"
+
+  build-release-binaries:
+    name: Build Release Binaries (${{ matrix.lua }})
+    runs-on: ubuntu-20.04
+    needs: create-release
+    
+    strategy:
+      matrix:
+        lua: [LUAJIT21, LUA51]
+    
+    env:
+      TORCH_LUA_VERSION: ${{ matrix.lua }}
+      INSTALL_PREFIX: ${{ github.workspace }}/torch/install
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=${GITHUB_REF#refs/tags/}
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake gfortran gcc-multilib gfortran-multilib liblapack-dev \
+            build-essential curl libreadline-dev git-core \
+            libjpeg-dev libpng-dev ncurses-dev imagemagick \
+            libzmq3-dev unzip gnuplot
+      
+      - name: Build OpenBLAS
+        run: |
+          cd /tmp
+          git clone https://github.com/xianyi/OpenBLAS.git -b master --depth 1
+          cd OpenBLAS
+          make NO_AFFINITY=1 -j$(nproc)
+          make PREFIX=${{ github.workspace }}/OpenBlasInstall install
+      
+      - name: Build Torch
+        run: |
+          git clone https://github.com/torch/distro.git ${{ github.workspace }}/torch --recursive --depth 1
+          cd ${{ github.workspace }}/torch
+          mkdir -p build && cd build
+          export CMAKE_LIBRARY_PATH=${{ github.workspace }}/OpenBlasInstall/include:${{ github.workspace }}/OpenBlasInstall/lib:$CMAKE_LIBRARY_PATH
+          cmake .. \
+            -DCMAKE_INSTALL_PREFIX="${{ env.INSTALL_PREFIX }}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWITH_${{ matrix.lua }}=ON
+          make -j$(nproc)
+          make install
+      
+      - name: Build and package a9nn
+        run: |
+          export LD_LIBRARY_PATH=${{ env.INSTALL_PREFIX }}/lib:$LD_LIBRARY_PATH
+          export PATH=${{ env.INSTALL_PREFIX }}/bin:$PATH
+          ${{ env.INSTALL_PREFIX }}/bin/luarocks make rocks/nn-scm-1.rockspec
+          
+          # Create binary package
+          VERSION="${{ steps.get_version.outputs.version }}"
+          PACKAGE_NAME="a9nn-${VERSION}-${{ matrix.lua }}-linux-x86_64"
+          
+          mkdir -p ${PACKAGE_NAME}
+          cp -r ${{ env.INSTALL_PREFIX }}/lib/lua/5.1/* ${PACKAGE_NAME}/ || true
+          cp -r ${{ env.INSTALL_PREFIX }}/share/lua/5.1/nn ${PACKAGE_NAME}/ || true
+          
+          tar -czf ${PACKAGE_NAME}.tar.gz ${PACKAGE_NAME}
+          
+          echo "Binary package created: ${PACKAGE_NAME}.tar.gz"
+          ls -lh ${PACKAGE_NAME}.tar.gz
+      
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: release-binary-${{ matrix.lua }}
+          path: a9nn-*.tar.gz
+          retention-days: 90
