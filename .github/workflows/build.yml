@@ -46,7 +46,7 @@ jobs:
       
       - name: Cache OpenBLAS
         id: cache-openblas
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/OpenBlasInstall
           key: ${{ steps.cache-key.outputs.openblas-key }}
@@ -86,7 +86,7 @@ jobs:
       
       - name: Cache Torch
         id: cache-torch
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/torch
           key: ${{ steps.cache-key.outputs.torch-key }}
@@ -123,7 +123,7 @@ jobs:
       
       - name: Upload build artifacts
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: build-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.lua }}
           path: |
