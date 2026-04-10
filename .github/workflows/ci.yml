@@ -32,7 +32,7 @@ jobs:
       
       - name: Upload lint results
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: lint-results
           path: luacheck.log
@@ -65,7 +65,7 @@ jobs:
           echo "torch-key=${{ runner.os }}-gcc-${{ matrix.lua }}-torch-v1" >> $GITHUB_OUTPUT
       
       - name: Cache OpenBLAS
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/OpenBlasInstall
           key: ${{ steps.cache-key.outputs.openblas-key }}
@@ -89,7 +89,7 @@ jobs:
           make PREFIX=${{ github.workspace }}/OpenBlasInstall install
       
       - name: Cache Torch
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/torch
           key: ${{ steps.cache-key.outputs.torch-key }}
